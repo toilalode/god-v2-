@@ -3668,6 +3668,15 @@ function buildSaveData() {
 function saveGameProgress(silent) {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(buildSaveData()));
+    // Báo số liệu hiện tại lên app Android (nếu đang chạy trong app) để Widget màn
+  // hình chính hiển thị — không ảnh hưởng gì khi chơi trên trình duyệt thường.
+  try {
+    if (window.AndroidStats && typeof window.AndroidStats.updateStats === 'function') {
+      window.AndroidStats.updateStats(JSON.stringify({
+        kills: S.kills, hp: S.hp, maxHp: S.maxHp, mana: S.mana, maxMana: S.maxMana
+      }));
+    }
+  } catch (e) {}
     if (!silent) addLog("💾 [LƯU FILE] Đã lưu Kill & tiến trình thành công!");
   } catch (e) {
     if (!silent) addLog("⚠️ [LƯU FILE] Lưu thất bại — trình duyệt chặn localStorage.");
