@@ -1,0 +1,130 @@
+name: Build God Hunter App
+
+# Tự động build mỗi khi push code / tạo Pull Request (bản debug + chạy Android
+# Lint để tự phát hiện lỗi cấu hình), và build bản đã KÝ (release APK + AAB)
+# kèm tự tạo trang GitHub Release khi bạn đẩy 1 tag dạng "v1.0", "v1.1"...
+# (ví dụ: git tag v1.1 && git push origin v1.1)
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  debug-build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Repo đã có sẵn gradle/wrapper/gradle-wrapper.jar và ./gradlew, nhưng CI
+      # vẫn dùng action này để cài đúng bản Gradle khai báo trong
+      # gradle-wrapper.properties và chạy trực tiếp bằng "gradle" thay vì
+      # "./gradlew" — tránh phụ thuộc vào cờ quyền thực thi của file gradlew khi
+      # checkout trên runner, và tận dụng cache Gradle giữa các lần chạy.
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace
+
+      # Kiểm tra tự động: quét lỗi/cảnh báo cấu hình Android (manifest sai,
+      # tài nguyên thiếu, permission thừa...) — không phải "unit test" cho
+      # gameplay (app không có logic game ở phía Java để test), nhưng là bước
+      # kiểm tra tự động thiết thực nhất cho 1 project dạng WebView wrapper.
+      - name: Run Android Lint (automated checks)
+        run: gradle lintDebug --stacktrace
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: god-hunter-lint-report
+          path: app/build/reports/lint-results-debug.html
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: god-hunter-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+  release-build:
+    name: Build signed release APK + AAB
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # Cần quyền ghi để action tạo Release bên dưới có thể tạo trang Release mới.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      # Giải mã keystore từ GitHub Secret (dạng base64) ra file thật, và tạo
+      # keystore.properties tạm thời cho lần build này. Cần khai báo 4 secret
+      # trong Settings > Secrets and variables > Actions của repo:
+      #   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+      #   ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+      # Tạo chuỗi base64 từ file .keystore bằng lệnh:
+      #   macOS/Linux: base64 -i godhunter-release.keystore | pbcopy
+      #   Windows (PowerShell): [Convert]::ToBase64String([IO.File]::ReadAllBytes("godhunter-release.keystore")) | Set-Clipboard
+      - name: Decode keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > godhunter-release.keystore
+
+      - name: Write keystore.properties
+        run: |
+          cat > keystore.properties << EOF
+          storeFile=godhunter-release.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Build release APK + AAB
+        run: |
+          gradle assembleRelease --stacktrace
+          gradle bundleRelease --stacktrace
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: god-hunter-release-apk
+          path: app/build/outputs/apk/release/*.apk
+
+      - name: Upload release AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: god-hunter-release-aab
+          path: app/build/outputs/bundle/release/*.aab
+
+      # Tự tạo 1 trang GitHub Release ứng với tag vừa đẩy (vd "v1.1"), đính kèm
+      # thẳng file APK + AAB vào đó -> có link tải cố định để chia sẻ, không
+      # bị giới hạn ~90 ngày như Artifact ở trên. "generate_release_notes" tự
+      # viết ghi chú release dựa trên các commit/PR kể từ tag trước.
+      - name: Create GitHub Release with APK/AAB attached
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
+
+      # Dọn dẹp file nhạy cảm khỏi runner (không ảnh hưởng tới secret đã lưu
+      # trên GitHub, chỉ là dọn workspace của lần chạy này).
+      - name: Clean up secrets from workspace
+        if: always()
+        run: rm -f godhunter-release.keystore keystore.properties
