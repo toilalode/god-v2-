@@ -4978,6 +4978,21 @@ setInterval(() => {
     ensureVideoPlaying();
   }, 8000);
 })();
+  // HYBRID ONLINE/OFFLINE — file index.html DUY NHẤT dùng được cho cả 2 trường hợp:
+// 1) Web online (GitHub Pages, http/https): đăng ký Service Worker -> cache lại để tự chuyển OFFLINE khi mất mạng.
+// 2) App đóng gói offline (Cordova/WebView đọc file:// hoặc app://, config.xml): game đã có sẵn 100% trong máy rồi,
+//    Service Worker là thừa (và SW vốn không hoạt động được với giao thức file://) nên tự động BỎ QUA, không lỗi gì cả.
+const isPackagedApp = location.protocol === 'file:' || location.protocol === 'app:' || location.protocol === 'cdvfile:'
+  || location.protocol === 'capacitor:' || typeof window.cordova !== 'undefined';
+if('serviceWorker' in navigator && !isPackagedApp){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('./sw.js')
+      .then(()=> console.log('✅ Service Worker đã đăng ký — game sẽ chạy được cả khi mất mạng.'))
+      .catch(err => console.warn('⚠️ Không đăng ký được Service Worker:', err));
+  });
+} else if(isPackagedApp){
+  console.log('📦 Đang chạy dưới dạng app đóng gói (offline sẵn) — bỏ qua Service Worker.');
+    }
 </script>
 </body>
 </html>
